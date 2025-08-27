@@ -1,6 +1,4 @@
-# chem_gnn_perovskite_edges.py
 # Robust chemistry-aware GNN with EDGE FEATURES (NaN-safe, flexible parsing)
-# Run in a conda env with: torch, torch_geometric, pymatgen, pandas, numpy
 
 import ast, math, random, re
 from typing import List, Dict, Tuple
@@ -13,11 +11,13 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GINEConv, global_mean_pool
 from pymatgen.core.periodic_table import Element
+import os
+import matplotlib.pyplot as plt
 
 # ---------------- USER SETTINGS ----------------
-INPUT_CSV = "perovskite_numeric_encoded.csv"   # set your input file
+INPUT_CSV = "../data/perovskite_numeric_encoded.csv"   # set your input file
 
-# column names (per your schema)
+# column names 
 COL_REF_ID = "Ref_ID"
 COL_DOI = "Ref_DOI_number"
 COL_SINGLE_CRYSTAL = "Perovskite_single_crystal"
@@ -44,7 +44,7 @@ COL_DIM_COMBINED = "Perovskite_dimension_combined"
 TMIN_COL = "Stability_temperature_min"
 TMAX_COL = "Stability_temperature_max"
 
-# optional dict-like columns if available
+# dict-like columns if available
 PARSED_COL = "parsed_composition"
 FRACTION_COL = "composition_fraction"
 
@@ -444,6 +444,13 @@ test_loader = DataLoader(test_graphs, batch_size=BATCH_SIZE, shuffle=False)
 
 print(f"Train {len(train_graphs)} | Val {len(val_graphs)} | Test {len(test_graphs)}")
 
+# ---------- compute target normalization from TRAIN only ----------
+y_train = np.concatenate([g.y.numpy() for g in train_graphs]).astype(np.float32)
+y_mean = float(y_train.mean())
+y_std = float(y_train.std() + 1e-8)  # avoid divide-by-zero
+
+print(f"Target normalization: mean={y_mean:.4f}, std={y_std:.4f}")
+
 # ---------- MODEL ----------
 class ChemGNN_Edge(nn.Module):
     def __init__(self, node_in, edge_in, global_in, hidden=64, layers=3, dropout=0.1):
@@ -497,69 +504,114 @@ class ChemGNN_Edge(nn.Module):
 node_in = graphs[0].x.shape[1]
 edge_in = graphs[0].edge_attr.shape[1] if graphs[0].edge_attr.numel() > 0 else 17
 global_in = graphs[0].global_feats.shape[1]
-model = ChemGNN_Edge(node_in=node_in, edge_in=edge_in, global_in=global_in,
-                     hidden=64, layers=3, dropout=0.1).to(DEVICE)
+model = ChemGNN_Edge(
+    node_in=node_in, edge_in=edge_in, global_in=global_in,
+    hidden=128, layers=4, dropout=0.2
+).to(DEVICE)
+
+opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)  # a bit more WD
+loss_fn = nn.SmoothL1Loss()  # Huber-like, more robust than MSE
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    opt, mode="min", factor=0.7, patience=8, verbose=True
+)
 
 opt = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
 loss_fn = nn.MSELoss()
 
 # ---------- TRAINING ----------
+os.makedirs("plots", exist_ok=True)
+
 best_val = float("inf")
 best_state = None
 patience = 0
 
-for epoch in range(1, EPOCHS+1):
+train_loss_hist, val_mae_hist, val_rmse_hist = [], [], []
+
+for epoch in range(1, EPOCHS + 1):
     model.train()
     train_losses = []
     for batch in train_loader:
         batch = batch.to(DEVICE)
+        # skip bad labels
         if torch.any(torch.isnan(batch.y)) or torch.any(torch.isinf(batch.y)):
             continue
+
         opt.zero_grad()
         pred = model(batch)
-        if torch.any(torch.isnan(pred)):
-            continue
-        loss = loss_fn(pred, batch.y)
+
+        # normalize prediction and target with TRAIN stats
+        pred_n = (pred - y_mean) / y_std
+        y_n = (batch.y - y_mean) / y_std
+
+        loss = loss_fn(pred_n, y_n)
         if torch.isnan(loss):
             continue
+
         loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)  # gradient clipping
         opt.step()
         train_losses.append(loss.item())
-    train_loss = np.nan if len(train_losses)==0 else float(np.mean(train_losses))
 
-    # validation
+    train_loss = np.nan if len(train_losses) == 0 else float(np.mean(train_losses))
+
+    # ---------- validation ----------
     model.eval()
-    val_preds = []; val_targets = []
+    val_preds, val_targets = [], []
     with torch.no_grad():
         for batch in val_loader:
             batch = batch.to(DEVICE)
             pred = model(batch)
+            # compute metrics in ORIGINAL scale
             val_preds.append(pred.cpu().numpy())
             val_targets.append(batch.y.cpu().numpy())
+
     if val_preds:
         y = np.concatenate(val_targets)
         p = np.concatenate(val_preds)
-        val_mae = float(np.mean(np.abs(y-p)))
-        val_rmse = float(np.sqrt(np.mean((y-p)**2)))
+        val_mae = float(np.mean(np.abs(y - p)))
+        val_rmse = float(np.sqrt(np.mean((y - p) ** 2)))
     else:
         val_mae = val_rmse = float("nan")
 
-    print(f"Epoch {epoch:03d} | TrainLoss {train_loss:.6f} | Val MAE {val_mae:.6f} | Val RMSE {val_rmse:.6f}")
+    # history + logs
+    train_loss_hist.append(train_loss)
+    val_mae_hist.append(val_mae)
+    val_rmse_hist.append(val_rmse)
+    print(f"Epoch {epoch:03d} | TrainLoss(n) {train_loss:.6f} | Val MAE {val_mae:.6f} | Val RMSE {val_rmse:.6f}")
+
+    # LR scheduler on validation RMSE
+    if not math.isnan(val_rmse):
+        scheduler.step(val_rmse)
 
     # early stopping on RMSE
     if not math.isnan(val_rmse) and val_rmse < best_val - 1e-8:
         best_val = val_rmse
-        best_state = {k: v.cpu().clone() for k,v in model.state_dict().items()}
+        best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
         patience = 0
+        # optional: save checkpoint
+        torch.save({"model": best_state, "y_mean": y_mean, "y_std": y_std}, "plots/best_checkpoint.pt")
     else:
         patience += 1
         if patience >= EARLY_STOP_PATIENCE:
             print("Early stopping")
             break
 
+# ---------- save plots ----------
+plt.figure(figsize=(8, 6))
+plt.plot(train_loss_hist, label="Train Loss (normalized)")
+plt.xlabel("Epoch"); plt.ylabel("Loss"); plt.title("Training Loss (Normalized y)")
+plt.legend(); plt.savefig("plots/train_loss_final.png"); plt.close()
+
+plt.figure(figsize=(8, 6))
+plt.plot(val_mae_hist, label="Val MAE")
+plt.plot(val_rmse_hist, label="Val RMSE")
+plt.xlabel("Epoch"); plt.ylabel("Error"); plt.title("Validation Metrics (Original Scale)")
+plt.legend(); plt.savefig("plots/val_metrics_final.png"); plt.close()
+
 # load best
 if best_state:
     model.load_state_dict(best_state)
+
 
 # ---------- TEST ----------
 model.eval()
