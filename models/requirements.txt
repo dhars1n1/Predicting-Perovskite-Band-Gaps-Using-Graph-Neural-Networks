@@ -5,3 +5,5 @@ numpy
 scikit-learn
 pymatgen
 matplotlib
+shap 
+seaborn

@@ -1,5 +1,3 @@
-# Robust chemistry-aware GNN with EDGE FEATURES (NaN-safe, flexible parsing)
-
 import ast, math, random, re
 from typing import List, Dict, Tuple
 import numpy as np
@@ -14,8 +12,11 @@ from pymatgen.core.periodic_table import Element
 import os
 import matplotlib.pyplot as plt
 
+os.makedirs("plots", exist_ok=True)
 # ---------------- USER SETTINGS ----------------
-INPUT_CSV = "../data/perovskite_numeric_encoded.csv"   # set your input file
+INPUT_CSV = os.path.join(os.path.dirname(__file__), "..", "data", "perovskite_numeric_encoded.csv")
+INPUT_CSV = os.path.abspath(INPUT_CSV)
+
 
 # column names 
 COL_REF_ID = "Ref_ID"
@@ -443,6 +444,11 @@ val_loader = DataLoader(val_graphs, batch_size=BATCH_SIZE, shuffle=False)
 test_loader = DataLoader(test_graphs, batch_size=BATCH_SIZE, shuffle=False)
 
 print(f"Train {len(train_graphs)} | Val {len(val_graphs)} | Test {len(test_graphs)}")
+
+print("Saving graphs for later explanation...")
+torch.save(train_graphs, "plots/train_graphs.pt")
+torch.save(test_graphs, "plots/test_graphs.pt") 
+print("Graphs saved successfully")
 
 # ---------- compute target normalization from TRAIN only ----------
 y_train = np.concatenate([g.y.numpy() for g in train_graphs]).astype(np.float32)
