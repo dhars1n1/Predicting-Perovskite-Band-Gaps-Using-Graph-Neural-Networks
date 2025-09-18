@@ -5,7 +5,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 print("Loading raw data.")
-df = pd.read_csv("data/perovskite_data.csv")
+df = pd.read_csv("perovskite_data.csv")
 
 # --- Step 1: Basic Cleaning ---
 print("Selecting and cleaning columns.")
@@ -23,7 +23,7 @@ df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
 df = df.dropna(how="any")
 df = df[(df != "").all(axis=1)]
 df = df.drop_duplicates()
-df.to_csv("data/perovskite_filtered.csv", index=False)
+df.to_csv("perovskite_filtered.csv", index=False)
 print(f"Filtered data saved as perovskite_filtered.csv ({len(df)} rows)")
 
 # --- Step 2: Extract Unique Species ---
@@ -71,7 +71,7 @@ species_summary = pd.DataFrame(
     [(sp, freq, categorize(sp)) for sp, freq in freq_counter.items()],
     columns=["Species", "Frequency", "Category"]
 ).sort_values(by="Frequency", ascending=False)
-species_summary.to_csv("data/species_summary.csv", index=False)
+species_summary.to_csv("species_summary.csv", index=False)
 print(f"Species summary with categories saved as species_summary.csv")
 
 # --- Step 4: Frequency Encoding (Global) ---
@@ -103,7 +103,7 @@ for ion_col, coeff_col in species_cols.items():
 
 freq_encoded["Perovskite_band_gap"] = df["Perovskite_band_gap"].values
 freq_encoded = freq_encoded.loc[:, (freq_encoded != 0).any(axis=0)]  # drop all-zero columns
-freq_encoded.to_csv("data/perovskite_frequency_encoded.csv", index=False)
+freq_encoded.to_csv("perovskite_frequency_encoded.csv", index=False)
 print(f"Frequency encoded dataset saved as perovskite_frequency_encoded.csv ({freq_encoded.shape[1]-1} features)")
 
 # --- Step 5: Frequency Encoding by Site (A/B/C) ---
@@ -137,5 +137,5 @@ for site, (ion_col, coeff_col) in zip(["A", "B", "C"], species_cols.items()):
 freq_encoded_by_site = pd.concat(encoded_blocks, axis=1)
 freq_encoded_by_site["Perovskite_band_gap"] = df["Perovskite_band_gap"].values
 
-freq_encoded_by_site.to_csv("data/perovskite_frequency_encoded_by_site.csv", index=False)
+freq_encoded_by_site.to_csv("perovskite_frequency_encoded_by_site.csv", index=False)
 print(f"Frequency encoding with A/B/C site separation saved as perovskite_frequency_encoded_by_site.csv ({freq_encoded_by_site.shape[1]-1} features)")
