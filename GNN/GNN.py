@@ -16,14 +16,18 @@ warnings.filterwarnings("ignore")
 # -----------------------
 # RESULTS LOG
 # -----------------------
-if not os.path.exists("results/results_log.csv"):
-    with open("results/results_log.csv", "w") as f:
+results_dir = "../results"
+if not os.path.exists(results_dir):
+    os.makedirs(results_dir)
+
+if not os.path.exists(f"{results_dir}/results_log.csv"):
+    with open(f"{results_dir}/results_log.csv", "w") as f:
         f.write("batch_size,learning_rate,epochs,conv_type,best_val_rmse,test_rmse\n")
 
 # -----------------------
 # CONFIG
 # -----------------------
-CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else "data/perovskite_frequency_encoded_by_site.csv"
+CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else "../data/perovskite_frequency_encoded_by_site.csv"
 SEED = 42
 TEST_SIZE = 0.15
 VAL_SIZE = 0.15
@@ -104,9 +108,9 @@ train_val_idx, test_idx = train_test_split(np.arange(len(data_list)), test_size=
 train_idx, val_idx = train_test_split(train_val_idx, test_size=VAL_SIZE/(1 - TEST_SIZE), random_state=SEED)
 
 # Save indices for reproducibility
-np.save("results/train_idx.npy", train_idx)
-np.save("results/val_idx.npy", val_idx)
-np.save("results/test_idx.npy", test_idx)
+np.save(f"{results_dir}/train_idx.npy", train_idx)
+np.save(f"{results_dir}/val_idx.npy", val_idx)
+np.save(f"{results_dir}/test_idx.npy", test_idx)
 print("Saved train/val/test indices to .npy files")
 
 train_list = [data_list[i] for i in train_idx]
@@ -216,7 +220,7 @@ for bs, lr, epochs, conv_type in itertools.product(
                 "scaler": scaler,
                 "in_dim": in_dim,
                 "conv_type": conv_type
-            }, f"models/model_bs{bs}_lr{lr}_ep{epochs}_{conv_type}.pth")
+            }, f"../models/model_bs{bs}_lr{lr}_ep{epochs}_{conv_type}.pth")
             pat = 0
             print("  -> Saved improved model")
         else:
@@ -225,6 +229,6 @@ for bs, lr, epochs, conv_type in itertools.product(
             print("Early stopping.")
             break
 
-    with open("results/results_log.csv", "a") as f:
+    with open(f"{results_dir}/results_log.csv", "a") as f:
         f.write(f"{bs},{lr},{epochs},{conv_type},{best_val_rmse},{test_rmse}\n")
     print(f"Logged results for BS={bs}, LR={lr}, EPOCHS={epochs}, CONV={conv_type}")
