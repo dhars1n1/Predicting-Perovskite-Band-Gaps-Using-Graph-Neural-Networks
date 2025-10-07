@@ -6,19 +6,22 @@ from torch_geometric.nn import GCNConv, SAGEConv, global_mean_pool
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-from torch.serialization import safe_globals
+import matplotlib.pyplot as plt
+import networkx as nx
+from torch_geometric.utils import to_networkx
+import os
 
-
-import torch
 MODEL_PATH = "models/model_bs16_lr0.0005_ep100_gcn.pth"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Force full loading of the checkpoint
-checkpoint = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False)
+# Ensure results directory exists
+os.makedirs("results", exist_ok=True)
 
-# # Allowlist all necessary globals from previous errors
-# with safe_globals([StandardScaler, np._core.multiarray.scalar, np.dtype]):
-#     checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
+# Load the model checkpoint
+torch.serialization.add_safe_globals([StandardScaler])
+
+# Load normally, allowing full checkpoint loading
+checkpoint = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False)
 
 scaler = checkpoint["scaler"]
 in_dim = checkpoint["in_dim"]
@@ -90,6 +93,7 @@ c_cols = [c for c in df.columns if c.startswith("C_")]
 # PREDICTIONS
 # -----------------------
 preds = []
+graphs = []
 for _, row in df.iterrows():
     graph = row_to_graph(row, a_cols, b_cols, c_cols)
     graph = graph.to(DEVICE)
@@ -98,6 +102,7 @@ for _, row in df.iterrows():
         y_scaled = model(graph).cpu().numpy().reshape(-1,1)
         y_pred = scaler.inverse_transform(y_scaled)[0][0]
         preds.append(y_pred)
+        graphs.append(graph)
 
 df["Predicted_band_gap"] = preds
 
@@ -107,6 +112,50 @@ df["Predicted_band_gap"] = preds
 best_df = df.sort_values("Predicted_band_gap").reset_index(drop=True)
 print("Top 5 candidate perovskites for solar cells:")
 print(best_df.head(5))
+
+# Save the graph of the best perovskite
+best_graph_index = best_df.index[0]
+best_graph = graphs[best_graph_index]
+
+# Extract the elements for A, B, and C sites
+best_row = best_df.iloc[0]
+a_element = a_cols[np.argmax(best_row[a_cols].values)]
+b_element = b_cols[np.argmax(best_row[b_cols].values)]
+c_element = c_cols[np.argmax(best_row[c_cols].values)]
+
+# -----------------------
+# PLOT THE BEST PEROVSKITE GRAPH (Improved)
+# -----------------------
+
+# Convert to NetworkX
+nx_graph = to_networkx(best_graph, to_undirected=True)
+
+# Node labels
+node_labels = {
+    0: f"A-site\n{a_element.replace('A_', '')}",
+    1: f"B-site\n{b_element.replace('B_', '')}",
+    2: f"C-site\n{c_element.replace('C_', '')}"
+}
+
+# Node colors by site type
+node_colors = ["#6FA8DC", "#93C47D", "#EAD1DC"]  # A: blue, B: green, C: pink
+
+plt.figure(figsize=(7, 6))
+pos = nx.spring_layout(nx_graph, seed=42, k=0.8)  # stable layout
+
+# Draw nodes and edges
+nx.draw_networkx_edges(nx_graph, pos, width=2, edge_color="gray", alpha=0.6)
+nx.draw_networkx_nodes(nx_graph, pos, node_color=node_colors, node_size=1500, edgecolors="black", linewidths=1.5)
+nx.draw_networkx_labels(nx_graph, pos, labels=node_labels, font_size=11, font_color="black", font_weight="bold")
+
+# Title and aesthetics
+plt.title(f"Best Perovskite Graph\nPredicted Band Gap: {best_df['Predicted_band_gap'][0]:.2f} eV", fontsize=13, pad=15)
+plt.axis("off")
+plt.tight_layout()
+plt.savefig("results/best_perovskite_graph.png", dpi=300, bbox_inches="tight")
+plt.show()
+
+print("Graph of the best perovskite saved to results/best_perovskite_graph.png")
 
 # -----------------------
 # SAVE RESULTS
